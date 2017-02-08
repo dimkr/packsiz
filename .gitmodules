@@ -1,0 +1,3 @@
+[submodule "subprojects/szl"]
+	path = subprojects/szl
+	url = https://github.com/dimkr/szl

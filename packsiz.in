@@ -1,0 +1,567 @@
+#!@prefix@/@bindir@/szl
+
+# this file is part of packsiz.
+#
+# Copyright (c) 2017 Dima Krasner
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+$try {
+	$global packsiz.repo [$env.get PACKSIZ_REPO]
+} except {
+	$stderr writeln {Error: PACKSIZ_REPO is not set.}
+}
+
+$load archive
+$load ed25519
+$load curl
+
+$try {
+	$global packsiz.prefix [$env.get PACKSIZ_PREFIX]
+} except {
+	$global packsiz.prefix @prefix@
+}
+
+$global packsiz.root [$path.join $packsiz.prefix @localstatedir@ packsiz]
+$global packsiz.log_fmt [$dict.new info {[{}]<{}>: {}} warn {[{}]<{}>: {} (!)} error {[{}]<{}>: {}!} debug {[{}]<{}>: ({})} bug {[{}]<{}>: {} (!!!)}]
+$global packsiz.time_fmt {%d/%m %H:%M:%S}
+$global packsiz.self $0
+
+$proc packsiz.log {
+	$stdout writeln [$format [$dict.get $packsiz.log_fmt $1] [[$time.timestamp [$time.now]] format $packsiz.time_fmt] $1 $2]
+}
+
+$proc packsiz.verify {
+	$if [$byte.len $3] {
+		$packsiz.log info [$format {verifying {}} $4]
+		$ed25519.verify $1 $2 $3
+	} else {
+		$packsiz.log warn [$format {skipping the verification of {}} $4]
+	}
+}
+
+$proc packsiz.build_queue {
+	$try {
+		$export entry [$dict.get $2 $1]
+	} except {
+		$throw [$format {failed to locate {} in the package list} $1]
+	}
+
+	$local entries {}
+	$for dependency [$dict.get $entry dependencies] {
+		$list.extend $entries [$packsiz.build_queue $dependency $2 dependency]
+	}
+
+	$dict.set $entry trigger $3
+	$list.append $entries $entry
+
+	$return $entries
+}
+
+$proc packsiz.install {
+	$local name [$dict.get $1 name]
+	$local file_name [$dict.get $1 file_name]
+
+	$try {
+		# read the package contents
+		$packsiz.log debug [$format {reading {}} $file_name]
+
+		$local fp [$open $2 ru]
+		$local tar [$fp read [$- [$file.size $2] 68]]
+		$local magic [$fp read 4]
+		$local signature [$fp read 64]
+
+		# verify the magic number
+		$if [$!= $magic hjkl] {
+			$throw [$format {{} is not a valid package} $file_name]
+		}
+
+		# verify the package digital signature, using the public key
+		$packsiz.verify $tar $signature $4 $file_name
+
+		# list the package contents
+		$packsiz.log info [$format {registering {}} $name]
+		$local files [[$archive.open $tar] list]
+
+		$dir.create [$path.join $packsiz.root installed $name]
+
+		# save the file list
+		[$open [$path.join $packsiz.root installed $name files] wu] write [$list.join $newline $files]
+
+		# save the raw package entry
+		[$open [$path.join $packsiz.root installed $name entry] wu] write [$dict.get $1 raw]
+
+		# save the package installation trigger
+		[$open [$path.join $packsiz.root installed $name trigger] wu] write $3
+
+		# extract the tar archive contained in the package
+		$packsiz.log info [$format {extracting {}} $file_name]
+		[$archive.open $tar] extract
+	} except {
+		$packsiz.log error $_
+		$packsiz.remove_force $name
+		$throw [$format {failed to install {}} $name]
+	}
+}
+
+$proc packsiz.fetch {
+	$packsiz.log info {building the package installation queue}
+	$local entries [$packsiz.build_queue $2 $3 $4]
+
+	$local names {}
+	$local paths {}
+	$local installed {}
+
+	# create a unique, sorted list from the package entries in the queue
+	$local unique_entries {}
+	$for entry [$uniq $entries] {
+		$local name [$dict.get $entry name]
+		$if [$path.exists [$path.join $packsiz.root installed $name entry]] {
+			$packsiz.log warn [$format {{} is already installed} $name]
+			$list.append $installed $name
+			$continue
+		}
+		$list.append $paths [$dict.get $entry path]
+		$list.append $names $name
+		$list.append $unique_entries $entry
+	}
+
+	# if all packages are installed, stop here
+	$local length [$list.len $names]
+	$if [$! $length] {
+		$return
+	}
+
+	# download all packages
+	$local path [$path.join $packsiz.root downloaded]
+	$if [$! [$path.exists $path]] {
+		$dir.create $path
+	}
+	$if [$> $length 1] {
+		$packsiz.log info [$format {downloading {} and {}} [$list.join {, } [$list.range $names 0 [$- $length 2]]] [$list.index $names [$- $length 1]]]
+	} else {
+		$packsiz.log info [$format {downloading {}} $names]
+	}
+
+	$local stmt [$list.new $curl.get]
+	$for entry $unique_entries {
+		$list.append $stmt [$dict.get $entry url]
+		$list.append $stmt [$dict.get $entry path]
+	}
+	$call $stmt
+
+	$local sig [$signal $sigterm $sigint]
+	$sig unblock
+
+	$try {
+		$for entry $entries {
+			$if [$byte.len [$sig read]] {
+				$throw interrupted
+			}
+
+			$local name [$dict.get $entry name]
+
+			# if the package is already installed, do nothing
+			$if [$list.in $installed $name] {
+				$continue
+			}
+
+			# install the package
+			$packsiz.install $entry [$dict.get $entry path] [$dict.get $entry trigger] $5
+
+			# append it to the list of installed packages
+			$list.append $installed $name
+		}
+	} except {
+		$local msg $_
+
+		$packsiz.cleanup
+		$for path $paths {
+			$file.delete $path
+		}
+
+		$throw $msg
+	}
+}
+
+$proc packsiz.installed {
+	$local installed {}
+
+	$for path [$map name [$list.index [$dir.list [$path.join $packsiz.root installed]] 0] {$path.join $packsiz.root installed $name}] {
+		$local trigger [[$open [$path.join $path trigger] ru] read]
+		$local entry [[$open [$path.join $path entry] ru] read]
+		$local package [$packsiz.parse $entry]
+
+		$dict.set $installed [$dict.get $package name] [$list.new $package $trigger]
+	}
+
+	$return $installed
+}
+
+$proc packsiz.remove_force {
+	$local package_dir [$path.join $packsiz.root installed $1]
+	$local path [$path.join $package_dir files]
+
+	$if [$path.exists $path] {
+		# read the list of files installed by the package
+		$local files [$list.reverse [$str.split [[$open $path ru] read] $newline]]
+
+		# delete all files, in reverse order
+		$for file $files {
+			$if [$path.exists $file] {
+				$if [$path.isdir $file] {
+					$try {
+						$dir.delete $file
+					}
+				} else {
+					$file.delete $file
+				}
+			}
+		}
+	}
+
+	# read the package entry, to obtain its file name
+	$local path [$path.join $package_dir entry]
+	$if [$path.exists $path] {
+		$local entry [[$open $path ru] read]
+		$local package [$packsiz.parse $entry]
+
+		# delete the downloaded package
+		$file.delete [$path.join $packsiz.root downloaded [$dict.get $package file_name]]
+	}
+
+	# remove the package installation data
+	$dir.rdelete $package_dir
+}
+
+$proc packsiz.needed {
+	$for installed_package [$map {k v} $2 {$echo $k}] {
+		$local package [$list.index [$dict.get $2 $installed_package] 0]
+		$if [$list.in [$dict.get $package dependencies] $1] {
+			$return [$dict.get $package name]
+		}
+	}
+}
+
+# safely removes a package
+$proc packsiz.remove {
+	$if [$! [$path.exists [$path.join $packsiz.root installed $1 trigger]]] {
+		$packsiz.log warn [$format {{} is not installed} $1]
+		$return
+	}
+
+	$local trigger [$list.index [$dict.get $2 $1] 1]
+	$if [$!= $trigger user] {
+		$packsiz.log error [$format {{} cannot be removed; it is a {} package} $1 $trigger]
+		$return
+	}
+
+	$if [$packsiz.needed $1 $2] {
+		$packsiz.log error [$format {{} cannot be removed; it is required by another package} $1]
+		$return
+	}
+
+	$packsiz.log info [$format {removing {}} $1]
+	$packsiz.remove_force $1
+}
+
+$proc packsiz.cleanup {
+	$packsiz.log info {looking for unneeded packages}
+
+	$local installed [$packsiz.installed]
+	$do {
+		$local found 0
+		$for name [$map {k v} $installed {$echo $k}] {
+			# automatically remove only dependency packages
+			$if [$!= dependency [$list.index [$dict.get $installed $name] 1]] {
+				$continue
+			}
+
+			$local other [$packsiz.needed $name $installed]
+			$if $other {
+				$packsiz.log debug [$format {{} cannot be removed; needed by {}} $name $other]
+			} else {
+				$packsiz.log info [$format {removing {}} $name]
+				$packsiz.remove_force $name
+				$export found [$+ $found 1]
+			}
+
+			$export found
+		}
+
+		$if [$! $found] {$break}
+		$local installed [$packsiz.installed]
+		$if [$! $installed] {$break}
+
+		$packsiz.log debug {looking for more unneeded packages}
+	} while 1
+}
+
+$proc packsiz.update {
+	$packsiz.log info {updating the package list}
+
+	$local sig [$signal $sigterm $sigint]
+	$sig unblock
+
+	$local list_path [$path.join $packsiz.root available]
+	$try {
+		$curl.get [$format {{}/available} $1] $list_path
+		$if [$byte.len [$sig read]] {
+			$throw interrupted
+		}
+	} except {
+		$file.delete $list_path
+		$throw {failed to download the package list}
+	}
+
+	$local sig_path [$path.join $packsiz.root available.sig]
+	$try {
+		$curl.get [$format {{}/available.sig} $1] $sig_path
+	} except {
+		$file.delete $list_path
+		$file.delete $sig_path
+		$throw {failed to download the package list digital signature}
+	}
+}
+
+$proc packsiz.parse {
+	$local fields [$str.split $1 |]
+
+	$local package {}
+	$dict.set $package name [$list.index $fields 0]
+	$dict.set $package version [$list.index $fields 1]
+	$dict.set $package description [$list.index $fields 2]
+	$dict.set $package file_name [$list.index $fields 3]
+	$dict.set $package dependencies [$list.index $fields 4]
+
+	$return $package
+}
+
+$proc packsiz.available {
+	$local list [$path.join $packsiz.root available]
+	$local sig [$path.join $packsiz.root available.sig]
+
+	# if the package list is missing, fetch it
+	$if [$! [$&& [$path.exists $list] [$path.exists $sig]]] {
+		$packsiz.update $1
+	}
+
+	# parse the package list
+	$local data [[$open $list ru] read]
+	$local signature [[$open $sig ru] read]
+	$packsiz.verify $data $signature $2 {the package list}
+
+	$local packages {}
+	$local raw {}
+
+	$for entry [$map i [$str.split [$rtrim $data] $newline] {$rtrim $i}] {
+		$local package [$packsiz.parse $entry]
+		$dict.set $package raw $entry
+
+		$local file_name [$dict.get $package file_name]
+		$dict.set $package url [$str.join / $1 $file_name]
+		$dict.set $package path [$path.join $packsiz.root downloaded $file_name]
+
+		$dict.set $packages [$dict.get $package name] $package
+	}
+
+	$return $packages
+}
+
+$proc packsiz.purge {
+	$packsiz.log info {purging unwanted files}
+	$file.delete [$path.join $packsiz.root available.sig]
+	$file.delete [$path.join $packsiz.root available]
+	$dir.rdelete [$path.join $packsiz.root downloaded]
+}
+
+$proc packsiz.lock {
+	$packsiz.log info [$format {locking {}} $1]
+	[$open [$path.join $packsiz.root installed $1 trigger] wu] write locked
+}
+
+$proc packsiz.package {
+	$local tar [$stdin read]
+	$local sig [$ed25519.sign $tar $1 $2]
+	$stdout write [$str.join hjkl $tar $sig]
+}
+
+$proc usage {
+	$stderr writeln [$format {Usage: {} {}} $packsiz.self $1]
+	$exit 1
+}
+
+$if [$< [$list.len $@] 2] {
+	$usage {update|available|installed|install|remove|autoremove|lock|source|shell|purge|package|sign [ARG]...}
+}
+
+$for path [$list.new $packsiz.root [$path.join @prefix@ @sysconfdir@ packsiz] [$path.join $packsiz.root installed]] {
+	$if [$! [$path.exists $path]] {
+		$dir.create $path
+	}
+}
+
+# if no keys are present, generate a new pair
+$local pub_key [$path.join @prefix@ @sysconfdir@ packsiz pub_key]
+$local priv_key [$path.join @prefix@ @sysconfdir@ packsiz priv_key]
+
+$if [$|| [$! [$path.exists $pub_key]] [$! [$path.exists $priv_key]]] {
+	$local keys [$ed25519.keypair]
+
+	$try {
+		[$open $priv_key wu] write [$list.index $keys 0]
+	} except {
+		$local msg $_
+		$file.delete $priv_key
+		$throw $msg
+	}
+
+	$try {
+		[$open $pub_key wu] write [$list.index $keys 1]
+	} except {
+		$local msg $_
+		$file.delete $pub_key
+		$file.delete $priv_key
+		$throw $msg
+	}
+}
+
+# wait for other instances to terminate
+$local path [$path.join $packsiz.root lock]
+$if [$path.exists $path] {
+	$if [$file.locked $path] {
+		$packsiz.log warn {another instance is running; waiting}
+	}
+}
+$local lock [$file.lock $path]
+
+$try {
+	$switch [$list.index $@ 1] update {
+		$if [$!= [$list.len $@] 2] {
+			$usage update
+		}
+
+		$packsiz.update $packsiz.repo
+	} available {
+		$if [$!= [$list.len $@] 2] {
+			$usage available
+		}
+
+		$local key [[$open $pub_key ru] read]
+		$local installed [$packsiz.installed]
+		$local available [$packsiz.available $packsiz.repo $key]
+		$for {k v} $available {
+			$if [$! [$dict.get $installed $k {}]] {
+				$stdout writeln [$format {{}|{}|{}} [$dict.get $v name] [$dict.get $v version] [$dict.get $v description]]
+			}
+		}
+	} installed {
+		$if [$!= [$list.len $@] 2] {
+			$usage installed
+		}
+
+		$local installed [$packsiz.installed]
+		$for {k v} [$packsiz.installed] {
+			$if [$!= [$list.index $v 1] dependency] {
+				$local entry [$list.index $v 0]
+				$stdout writeln [$format {{}|{}|{}} [$dict.get $entry name] [$dict.get $entry version] [$dict.get $entry description]]
+			}
+		}
+	} install {
+		$if [$< [$list.len $@] 3] {
+			$usage {install NAME...}
+		}
+
+		$local key [[$open $pub_key ru] read]
+		$local available [$packsiz.available $packsiz.repo $key]
+
+		$cd $packsiz.prefix
+		$for package [$list.range $@ 2 [$- [$list.len $@] 1]] {
+			$packsiz.fetch $packsiz.repo $package $available user $key
+		}
+	} remove {
+		$if [$< [$list.len $@] 3] {
+			$usage {remove NAME...}
+		}
+
+		$cd $packsiz.prefix
+		$for package [$list.range $@ 2 [$- [$list.len $@] 1]] {
+			$packsiz.remove $package [$packsiz.installed]
+		}
+	} autoremove {
+		$if [$> [$list.len $@] 2] {
+			$for package [$list.range $@ 2 [$- [$list.len $@] 1]] {
+				$packsiz.remove $package [$packsiz.installed]
+			}
+		}
+
+		$cd $packsiz.prefix
+		$packsiz.cleanup
+	} lock {
+		$if [$!= [$list.len $@] 3] {
+			$usage {lock NAME}
+		}
+
+		$packsiz.lock [$list.index $@ 2]
+	} source {
+		$if [$!= [$list.len $@] 3] {
+			$usage {source SCRIPT}
+		}
+
+		$cd $packsiz.prefix
+		$source [$list.index $@ 2]
+	} purge {
+		$if [$!= [$list.len $@] 2] {
+			$usage purge
+		}
+
+		$cd $packsiz.prefix
+		$packsiz.purge
+	} purge {
+		$if [$!= [$list.len $@] 2] {
+			$usage package
+		}
+
+		$cd $packsiz.prefix
+		$packsiz.package [[$open $priv_key ru] read] [[$open $pub_key ru] read]
+	} sign {
+		$if [$!= [$list.len $@] 2] {
+			$usage package
+		}
+
+		$stdout write [$ed25519.sign [$stdin read] [[$open $priv_key ru] read] [[$open $pub_key ru] read]]
+	} shell {
+		$if [$!= [$list.len $@] 2] {
+			$usage shell
+		}
+
+		$cd $packsiz.prefix
+		$szl.shell
+	} * {
+		$usage {update|available|installed|install|remove|autoremove|lock|source|shell|purge|package|sign [ARG]...}
+	}
+} except {
+	$local msg $_
+	$if [$byte.len $msg] {
+		$packsiz.log error $msg
+	} else {
+		$packsiz.log bug {caught an unknown, unhandled exception}
+	}
+	$exit 1
+}

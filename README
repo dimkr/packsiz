@@ -1,0 +1,25 @@
+                  _        _
+ _ __   __ _  ___| | _____(_)____
+| '_ \ / _` |/ __| |/ / __| |_  /
+| |_) | (_| | (__|   <\__ \ |/ /
+| .__/ \__,_|\___|_|\_\___/_/___|
+|_|
+
+Overview
+========
+
+packsiz is a tiny, lightweight, hackable and permissively-licensed package
+manager for Linux (https://www.kernel.org/) distributions.
+
+packsiz is a re-implementation of packlim (https://github.com/dimkr/packlim) in
+szl (https://github.com/dimkr/szl) rather than Tcl
+(https://github.com/msteveb/jimtcl/).
+
+Credits and Legal Information
+=============================
+
+packsiz is free and unencumbered software released under the terms of the MIT
+license; see COPYING for the license text. For a list of its authors and
+contributors, see AUTHORS.
+
+The ASCII art logo at the top was made using FIGlet (http://www.figlet.org/).
