@@ -552,7 +552,7 @@ $try {
 		}
 
 		$cd $packsiz.prefix
-		$szl.shell
+		$szl.shell $szl.this
 	} * {
 		$usage {update|available|installed|install|remove|autoremove|lock|source|shell|purge|package|sign [ARG]...}
 	}
