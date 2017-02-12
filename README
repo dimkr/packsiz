@@ -15,6 +15,103 @@ packsiz is a re-implementation of packlim (https://github.com/dimkr/packlim) in
 szl (https://github.com/dimkr/szl) rather than Tcl
 (https://github.com/msteveb/jimtcl/).
 
+Features
+========
+                                              Recursive dependencies resolution
+  # packsiz install mutt                                        ||
+     [12/02 20:21:07]<info>: verifying the package list         \/
+     [12/02 20:21:07]<info>: building the package installation queue
+     [12/02 20:21:07]<warn>: iana-etc is already installed (!)
+     [12/02 20:21:07]<warn>: linux-libre-headers is already installed (!)
+     [12/02 20:21:07]<warn>: musl is already installed (!)
+     [12/02 20:21:07]<warn>: ncurses is already installed (!)
+     [12/02 20:21:07]<warn>: zlib is already installed (!)
+     [12/02 20:21:07]<warn>: ca-certificates is already installed (!)
+     [12/02 20:21:07]<warn>: libressl is already installed (!)
+     [12/02 20:21:07]<info>: downloading fetchmail, msmtp and mutt
+     [12/02 20:21:07]<debug>: (reading fetchmail-6.3.26.pkg)   /\
+     [12/02 20:21:07]<info>: verifying fetchmail-6.3.26.pkg    ||
+     [12/02 20:21:07]<info>: registering fetchmail             ||
+     [12/02 20:21:07]<info>: extracting fetchmail-6.3.26.pkg   ||
+     [12/02 20:21:07]<debug>: (reading msmtp-1.6.2.pkg)        ||
+     [12/02 20:21:07]<info>: verifying msmtp-1.6.2.pkg         Parallel download
+     [12/02 20:21:07]<info>: registering msmtp                 of all packages
+     [12/02 20:21:07]<info>: extracting msmtp-1.6.2.pkg        in a dependency
+     [12/02 20:21:07]<debug>: (reading mutt-1.5.23.pkg)        chain, before it
+  /> [12/02 20:21:07]<info>: verifying mutt-1.5.23.pkg         gets installed
+  || [12/02 20:21:07]<info>: registering mutt
+  || [12/02 20:21:08]<info>: extracting mutt-1.5.23.pkg
+  ||                              /\
+ Digitally-signed packages        ||
+                                  ||
+                Support for multiple compression algorithms
+
+                                                            Automatic removal
+  # packsiz autoremove mutt                           /==== of unneeded packages
+  [12/02 20:24:53]<info>: removing mutt              \/
+  [12/02 20:24:53]<info>: looking for unneeded packages
+  [12/02 20:24:53]<debug>: (libpcap cannot be removed; needed by tcpdump)
+  [12/02 20:24:53]<info>: removing fetchmail
+  [12/02 20:24:53]<info>: removing msmtp
+  [12/02 20:24:53]<debug>: (zlib cannot be removed; needed by libressl)
+  [12/02 20:24:53]<debug>: (ncurses cannot be removed; needed by nano)
+  [12/02 20:24:53]<debug>: (linux-libre-headers cannot be removed; needed by musl)
+  [12/02 20:24:53]<debug>: (tinyalsa cannot be removed; needed by mpg123)
+  [12/02 20:24:53]<debug>: (libressl cannot be removed; needed by fetchmail)
+  [12/02 20:24:53]<debug>: (musl cannot be removed; needed by libpcap)
+  [12/02 20:24:53]<debug>: (ca-certificates cannot be removed; needed by libressl)
+  [12/02 20:24:53]<debug>: (iana-etc cannot be removed; needed by musl)
+  [12/02 20:24:53]<debug>: (looking for more unneeded packages)
+  [12/02 20:24:53]<debug>: (libpcap cannot be removed; needed by tcpdump)
+  [12/02 20:24:53]<debug>: (zlib cannot be removed; needed by libressl)
+  [12/02 20:24:53]<debug>: (ncurses cannot be removed; needed by nano)
+  [12/02 20:24:53]<debug>: (linux-libre-headers cannot be removed; needed by musl)
+  [12/02 20:24:53]<debug>: (tinyalsa cannot be removed; needed by mpg123)
+  [12/02 20:24:53]<debug>: (libressl cannot be removed; needed by tcpdump)
+  [12/02 20:24:53]<debug>: (musl cannot be removed; needed by libpcap)
+  [12/02 20:24:53]<debug>: (ca-certificates cannot be removed; needed by libressl)
+  [12/02 20:24:53]<debug>: (iana-etc cannot be removed; needed by musl)
+
+In addition, packsiz:
+  - Supports installation of packages to a prefix other than /
+  - Has a scripting interface
+
+Scripting Interface
+===================
+
+packsiz allows complex package management tasks through an interactive scripting
+shell or scripts, using a szl API in the "packsiz" namespace.
+
+For example:
+  1) To list the packages available in a repository:
+    $packsiz.available http://repository {}
+
+  2) To remove a package:
+    $packsiz.remove ca-certificates [$packsiz.installed]
+
+  3) To remove all unneeded dependency packages:
+    $packsiz.cleanup
+
+packsiz uses all API internally as well; see its implementation for more usage
+examples.
+
+Missing Features
+================
+
+  - Support for multiple repositories - packsiz is designed for small
+    distributions with one repository per architecture
+  - Support for multiple architectures in one repository
+
+Building
+========
+
+  # git clone --recursive https://github.com/dimkr/packsiz
+  # cd packsiz
+  # meson build
+  # cd build
+  # ninja
+  # ninja install
+
 Credits and Legal Information
 =============================
 
