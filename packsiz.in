@@ -245,7 +245,10 @@ $proc packsiz.remove_force {
 		$local package [$packsiz.parse $entry]
 
 		# delete the downloaded package
-		$file.delete [$path.join $packsiz.state_dir downloaded [$dict.get $package file_name]]
+		$local path [$path.join $packsiz.state_dir downloaded [$dict.get $package file_name]]
+		$if [$file.exists $path] {
+			$file.delete $path
+		}
 	}
 
 	# remove the package installation data
@@ -390,9 +393,9 @@ $proc packsiz.available {
 
 $proc packsiz.purge {
 	$packsiz.log info {purging unwanted files}
-	$file.delete [$path.join $packsiz.state_dir available.sig]
-	$file.delete [$path.join $packsiz.state_dir available]
-	$dir.rdelete [$path.join $packsiz.state_dir downloaded]
+	$try {$file.delete [$path.join $packsiz.state_dir available.sig]}
+	$try {$file.delete [$path.join $packsiz.state_dir available]}
+	$try {$dir.rdelete [$path.join $packsiz.state_dir downloaded]}
 }
 
 $proc packsiz.lock {
