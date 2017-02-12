@@ -246,7 +246,7 @@ $proc packsiz.remove_force {
 
 		# delete the downloaded package
 		$local path [$path.join $packsiz.state_dir downloaded [$dict.get $package file_name]]
-		$if [$file.exists $path] {
+		$if [$path.exists $path] {
 			$file.delete $path
 		}
 	}
@@ -437,7 +437,7 @@ $if [$|| [$! [$path.exists $pub_key]] [$! [$path.exists $priv_key]]] {
 		[$open $priv_key wu] write [$list.index $keys 0]
 	} except {
 		$local msg $_
-		$if [$file.exists $priv_key] {$file.delete $priv_key}
+		$if [$path.exists $priv_key] {$file.delete $priv_key}
 		$throw $msg
 	}
 
@@ -445,7 +445,7 @@ $if [$|| [$! [$path.exists $pub_key]] [$! [$path.exists $priv_key]]] {
 		[$open $pub_key wu] write [$list.index $keys 1]
 	} except {
 		$local msg $_
-		$if [$file.exists $pub_key] {$file.delete $pub_key}
+		$if [$path.exists $pub_key] {$file.delete $pub_key}
 		$file.delete $priv_key
 		$throw $msg
 	}
