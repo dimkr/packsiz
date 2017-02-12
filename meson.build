@@ -44,3 +44,6 @@ packsiz_8 = configure_file(input:
                            configuration: cfg)
 # TODO: add support for targets as install_man() input
 install_data(packsiz_8, install_dir: join_paths(get_option('mandir'), 'man8'))
+
+install_data('README', 'COPYING', 'AUTHORS',
+             install_dir: join_paths(get_option('datadir'), 'doc', 'packsiz'))
