@@ -83,6 +83,7 @@ packsiz allows complex package management tasks through an interactive scripting
 shell or scripts, using a szl API in the "packsiz" namespace.
 
 For example:
+
   1) To list the packages available in a repository:
     $packsiz.available http://repository {}
 
