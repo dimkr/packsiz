@@ -99,7 +99,8 @@ $proc packsiz.install {
 
 		# list the package contents
 		$packsiz.log info [$format {registering {}} $name]
-		$local files [[$archive.open $tar] list]
+		$local archive [$archive.open $tar]
+		$local files [$archive list]
 
 		$dir.create [$path.join $packsiz.state_dir installed $name]
 
@@ -114,7 +115,7 @@ $proc packsiz.install {
 
 		# extract the tar archive contained in the package
 		$packsiz.log info [$format {extracting {}} $file_name]
-		[$archive.open $tar] extract
+		$archive extract
 	} except {
 		$packsiz.log error $_
 		$packsiz.remove_force $name
